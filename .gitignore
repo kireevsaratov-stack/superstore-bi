@@ -1,0 +1,17 @@
+# Файлы Python
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Виртуальное окружение
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# Данные (если большие)
+data/*.parquet
