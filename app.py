@@ -12,6 +12,7 @@ if "dark_mode" not in st.session_state:
 
 st.set_page_config(page_title="Superstore BI Pro", page_icon="📊", layout="wide")
 
+
 # ============ КУРСЫ ВАЛЮТ ============
 @st.cache_data(ttl=86400)
 def get_exchange_rates():
@@ -106,14 +107,10 @@ with st.sidebar:
     dark_mode = st.checkbox("🌙 Тёмная тема")
     if dark_mode:
         st.session_state.dark_mode = True
-        st.markdown("""
-               <style>
-               .stApp { background-color: #0e1117; color: #c9d1d9; }
-               .stMetric { color: #c9d1d9; }
-               </style>
-           """, unsafe_allow_html=True)
+        plotly_template = 'plotly_dark'
     else:
         st.session_state.dark_mode = False
+        plotly_template = 'plotly'
 
     st.markdown("---")
     st.caption(f"Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
@@ -161,7 +158,8 @@ with tab1:
         st.subheader("Продажи по категориям")
         sales_cat = df.groupby('Category')['Sales'].sum().reset_index()
         fig = px.pie(sales_cat, values='Sales', names='Category', hole=0.4,
-                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                     color_discrete_sequence=px.colors.qualitative.Pastel,
+                     template=plotly_template)
         fig.update_traces(textinfo='percent+label+value',
                           texttemplate='%{label}<br>%{percent:.1%}<br>' + currency + '%{value:,.0f}',
                           textfont=dict(size=13))
@@ -172,7 +170,7 @@ with tab1:
         st.subheader("Продажи и Прибыль по месяцам")
         monthly = df.groupby([df['Order Date'].dt.to_period('M')]).agg({'Sales': 'sum', 'Profit': 'sum'}).reset_index()
         monthly['Order Date'] = monthly['Order Date'].astype(str)
-        fig = go.Figure()
+        fig = go.Figure(layout=dict(template=plotly_template))
         fig.add_trace(go.Scatter(x=monthly['Order Date'], y=monthly['Sales'], name='Продажи',
                                  fill='tozeroy', line=dict(color='#636EFA'),
                                  hovertemplate=currency + '%{y:,.0f}<extra>Продажи</extra>'))
@@ -193,9 +191,12 @@ with tab1:
         disc_profit = df.groupby('Discount Level', observed=False)['Profit'].sum().reset_index()
         colors = ['#00CC96' if x > 0 else '#EF553B' for x in disc_profit['Profit']]
         fig = px.bar(disc_profit, x='Discount Level', y='Profit', color='Discount Level',
-                     color_discrete_sequence=colors, text_auto='.2s')
+                     color_discrete_sequence=colors, text_auto='.2s',
+                     template=plotly_template)
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=13), textposition='outside')
-        fig.update_layout(showlegend=False, yaxis=dict(title=f'Прибыль ({currency})'))
+        fig.update_layout(showlegend=False,
+                          yaxis=dict(title=f'Прибыль ({currency})',
+                                     range=[disc_profit['Profit'].min() * 1.1, disc_profit['Profit'].max() * 1.1]))
         st.plotly_chart(fig, width='stretch')
 
     with col2:
@@ -205,22 +206,11 @@ with tab1:
                   'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
         heatmap_data.index = months[:len(heatmap_data)]
 
-        # Создаём аннотации со знаком валюты
-        annotations = []
-        for y_idx, month in enumerate(heatmap_data.index):
-            for x_idx, year in enumerate(heatmap_data.columns):
-                val = heatmap_data.iloc[y_idx, x_idx]
-                annotations.append(dict(
-                    x=year, y=month,
-                    text=f"{currency}{val:,.0f}",
-                    showarrow=False,
-                    font=dict(size=11, color="black" if val < heatmap_data.values.max() * 0.7 else "white")
-                ))
-
-        fig = px.imshow(heatmap_data, aspect='auto', color_continuous_scale='Blues')
+        fig = px.imshow(heatmap_data, aspect='auto', color_continuous_scale='Blues',
+                        template=plotly_template)
         fig.update_xaxes(side='top', title='Год', tickformat='d', dtick=1)
         fig.update_yaxes(title='Месяц')
-        fig.update_layout(coloraxis_colorbar=dict(title='Продажи'))
+        fig.update_layout(coloraxis_colorbar=dict(title=f'Продажи ({currency})'))
         fig.update_traces(text=[[f"{currency}{val:,.0f}" for val in row] for row in heatmap_data.values],
                           texttemplate="%{text}", textfont=dict(size=11))
         st.plotly_chart(fig, width='stretch')
@@ -235,9 +225,11 @@ with tab2:
         top10 = df.groupby('Product Name')['Sales'].sum().sort_values(ascending=False).head(10)
         fig = px.bar(x=top10.values, y=top10.index, orientation='h',
                      labels={'x': f'Продажи ({currency})', 'y': ''},
-                     text_auto='.2s', color=top10.values, color_continuous_scale='Blues')
+                     text_auto='.2s', color=top10.values, color_continuous_scale='Blues',
+                     template=plotly_template)
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False,
+                          xaxis=dict(range=[0, top10.values.max() * 1.1]))
         st.plotly_chart(fig, width='stretch')
 
     with col2:
@@ -245,9 +237,11 @@ with tab2:
         loss10 = df.groupby('Product Name')['Profit'].sum().sort_values().head(10)
         fig = px.bar(x=loss10.values, y=loss10.index, orientation='h',
                      labels={'x': f'Убыток ({currency})', 'y': ''},
-                     text_auto='.2s', color_discrete_sequence=['#EF553B'] * 10)
+                     text_auto='.2s', color_discrete_sequence=['#EF553B'] * 10,
+                     template=plotly_template)
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False,
+                          xaxis=dict(range=[loss10.values.min() * 1.1, 0]))
         st.plotly_chart(fig, width='stretch')
 
     st.markdown("---")
@@ -330,9 +324,11 @@ with tab3:
         top_customers = customer_stats.nlargest(10, 'Total_Sales')[['Customer_Name', 'Total_Sales', 'Orders']]
         fig = px.bar(top_customers, x='Total_Sales', y='Customer_Name', orientation='h',
                      labels={'Total_Sales': f'Продажи ({currency})', 'Customer_Name': 'Клиент'},
-                     text_auto='.2s', color='Total_Sales', color_continuous_scale='Blues')
+                     text_auto='.2s', color='Total_Sales', color_continuous_scale='Blues',
+                     template=plotly_template)
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False,
+                          xaxis=dict(range=[0, top_customers['Total_Sales'].max() * 1.1]))
         st.plotly_chart(fig, width='stretch')
 
     with col2:
@@ -340,8 +336,10 @@ with tab3:
         orders_dist = customer_stats['Orders'].value_counts().sort_index()
         fig = px.bar(x=orders_dist.index, y=orders_dist.values,
                      labels={'x': 'Количество заказов', 'y': 'Количество клиентов'},
-                     color_discrete_sequence=['#636EFA'])
+                     color_discrete_sequence=['#636EFA'],
+                     template=plotly_template)
         fig.update_traces(texttemplate='%{value:,}', textfont=dict(size=12), textposition='outside')
+        fig.update_layout(yaxis=dict(range=[0, orders_dist.values.max() * 1.1]))
         st.plotly_chart(fig, width='stretch')
 
     st.markdown("---")
@@ -353,9 +351,11 @@ with tab3:
         top_profit = customer_stats.nlargest(10, 'Total_Profit')[['Customer_Name', 'Total_Profit', 'Total_Sales']]
         fig = px.bar(top_profit, x='Total_Profit', y='Customer_Name', orientation='h',
                      labels={'Total_Profit': f'Прибыль ({currency})', 'Customer_Name': 'Клиент'},
-                     text_auto='.2s', color='Total_Profit', color_continuous_scale='Greens')
+                     text_auto='.2s', color='Total_Profit', color_continuous_scale='Greens',
+                     template=plotly_template)
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False,
+                          xaxis=dict(range=[0, top_profit['Total_Profit'].max() * 1.1]))
         st.plotly_chart(fig, width='stretch')
 
     with col2:
@@ -364,7 +364,8 @@ with tab3:
         customer_stats['Days_Since_Last'] = (ref_date - customer_stats['Last_Order']).dt.days
         fig = px.histogram(customer_stats, x='Days_Since_Last', nbins=30,
                            labels={'Days_Since_Last': 'Дней с последнего заказа', 'count': 'Клиентов'},
-                           color_discrete_sequence=['#AB63FA'])
+                           color_discrete_sequence=['#AB63FA'],
+                           template=plotly_template)
         st.plotly_chart(fig, width='stretch')
 
     st.markdown("---")
@@ -389,9 +390,11 @@ with tab4:
         fig = px.bar(state_data, x=state_data.index, y='Sales', color='Profit',
                      color_continuous_scale=['red', 'yellow', 'green'],
                      text_auto='.2s',
-                     labels={'Sales': f'Продажи ({currency})', 'State': 'Штат'})
+                     labels={'Sales': f'Продажи ({currency})', 'State': 'Штат'},
+                     template=plotly_template)
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=11), textposition='outside')
-        fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'))
+        fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'),
+                          yaxis=dict(range=[0, state_data['Sales'].max() * 1.1]))
         st.plotly_chart(fig, width='stretch')
 
     with col2:
@@ -401,9 +404,11 @@ with tab4:
         fig = px.bar(city_data, x=city_data.index, y='Sales', color='Profit',
                      color_continuous_scale=['red', 'yellow', 'green'],
                      text_auto='.2s',
-                     labels={'Sales': f'Продажи ({currency})', 'City': 'Город'})
+                     labels={'Sales': f'Продажи ({currency})', 'City': 'Город'},
+                     template=plotly_template)
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=11), textposition='outside')
-        fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'))
+        fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'),
+                          yaxis=dict(range=[0, city_data['Sales'].max() * 1.1]))
         st.plotly_chart(fig, width='stretch')
 
 # ============ TAB 5: ЭКСПОРТ ============
