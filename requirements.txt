@@ -4,3 +4,4 @@ plotly>=5.15.0
 requests
 numpy
 openpyxl
+statsmodels
