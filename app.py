@@ -455,31 +455,47 @@ with tab3:
     st.title('🔮 Прогноз продаж на год')
 
     try:
-        model, forecast, monthly_prophet = run_prophet_forecast(df)
+        from statsmodels.tsa.holtwinters import ExponentialSmoothing
+
+        # Подготовка данных
+        monthly = df.groupby(df['Order Date'].dt.to_period('M'))['Sales'].sum().reset_index()
+        monthly['Order Date'] = monthly['Order Date'].astype(str)
+        monthly_values = monthly['Sales'].values.astype(float)
+
+        # Обучение модели Holt-Winters
+        model = ExponentialSmoothing(
+            monthly_values,
+            seasonal_periods=12,
+            trend='add',
+            seasonal='add'
+        ).fit()
+
+        # Прогноз на 12 месяцев
+        forecast_values = model.forecast(12)
+
+        # Даты для прогноза
+        last_date = pd.to_datetime(monthly['Order Date'].iloc[-1])
+        future_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=12, freq='MS')
 
         # Прогнозный год
-        future_only = forecast.tail(12)
-        forecast_sales = future_only['yhat'].sum()
-        forecast_avg_sales = future_only['yhat'].mean()
+        forecast_sales = forecast_values.sum()
+        forecast_avg_sales = forecast_values.mean()
 
-        # Прибыль (на основе средней маржинальности)
+        # Прибыль
         avg_margin_pct = (df['Profit'].sum() / df['Sales'].sum() * 100) if df['Sales'].sum() > 0 else 10
         profit_margin = avg_margin_pct / 100
         forecast_profit = forecast_sales * profit_margin
         forecast_avg_profit = forecast_avg_sales * profit_margin
 
-        # Заказы (на основе среднего чека)
+        # Заказы
         avg_check = df['Sales'].sum() / df['Order ID'].nunique() if df['Order ID'].nunique() > 0 else 500
         forecast_orders = forecast_sales / avg_check
         forecast_avg_orders = forecast_avg_sales / avg_check
 
-        # Последний год из истории
-        last_year = monthly_prophet.tail(12)['y'].sum()
-        last_year_avg = monthly_prophet.tail(12)['y'].mean()
+        # Последний год истории
+        last_year = monthly_values[-12:].sum()
         last_year_profit = last_year * profit_margin
-        last_year_avg_profit = last_year_avg * profit_margin
         last_year_orders = last_year / avg_check
-        last_year_avg_orders = last_year_avg / avg_check
 
         # Динамика
         sales_delta_pct = (forecast_sales / last_year - 1) * 100
@@ -487,7 +503,7 @@ with tab3:
         orders_delta_pct = (forecast_orders / last_year_orders - 1) * 100
 
         # =========================================================
-        # ИНСАЙТЫ ГОД К ГОДУ
+        # ИНСАЙТЫ
         # =========================================================
         st.subheader('📊 Сравнение год к году')
 
@@ -517,59 +533,84 @@ with tab3:
         st.markdown('---')
 
         # =========================================================
-        # ГРАФИК: ИСТОРИЯ + ПРОГНОЗ
+        # ГРАФИК
         # =========================================================
         st.subheader('📈 История + Прогноз')
         fig = go.Figure(layout=dict(template=plotly_template))
-        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines',
+        fig.add_trace(go.Scatter(x=future_dates, y=forecast_values, mode='lines',
                                  name='Прогноз', line=dict(color='#FFA500', width=2)))
-        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'],
-                                 fill=None, mode='lines',
-                                 line=dict(color='lightblue', width=0), showlegend=False))
-        fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'],
-                                 fill='tonexty', mode='lines',
-                                 line=dict(color='lightblue', width=0),
-                                 fillcolor='rgba(173, 216, 230, 0.3)',
-                                 name='Дов. интервал'))
-        fig.add_trace(go.Scatter(x=monthly_prophet['ds'], y=monthly_prophet['y'],
+        fig.add_trace(go.Scatter(x=pd.to_datetime(monthly['Order Date']), y=monthly_values,
                                  mode='markers+lines', name='История',
                                  line=dict(color='#00CC96', width=2)))
         fig.update_layout(height=500, hovermode='x unified')
         st.plotly_chart(fig, width='stretch')
-
         # =========================================================
-        # ИНФОРМАЦИЯ О ПРОГНОЗЕ
+        # БЭКТЕСТИНГ: точность модели
+        # =========================================================
+        st.markdown('---')
+        st.subheader('🎯 Бэктестинг: проверка точности')
+
+        # Обучаем на 2014–2016, проверяем на 2017
+        train = monthly_values[:-12]  # всё кроме последнего года
+        test = monthly_values[-12:]  # последний год (2017)
+
+        model_backtest = ExponentialSmoothing(
+            train,
+            seasonal_periods=12,
+            trend='add',
+            seasonal='add'
+        ).fit()
+
+        forecast_backtest = model_backtest.forecast(12)
+
+        # Считаем ошибки
+        mae = np.mean(np.abs(test - forecast_backtest))  # средняя абсолютная ошибка
+        mape = np.mean(np.abs((test - forecast_backtest) / test)) * 100  # средняя % ошибка
+
+        # График бэктестинга
+        test_dates = pd.to_datetime(monthly['Order Date'].iloc[-12:])
+
+        fig_bt = go.Figure(layout=dict(template=plotly_template))
+        fig_bt.add_trace(go.Scatter(x=test_dates, y=test, mode='lines+markers',
+                                    name='Факт', line=dict(color='#00CC96', width=2)))
+        fig_bt.add_trace(go.Scatter(x=test_dates, y=forecast_backtest, mode='lines+markers',
+                                    name='Прогноз', line=dict(color='#FFA500', width=2, dash='dash')))
+        fig_bt.update_layout(height=350, hovermode='x unified',
+                             title='Проверка на 2017 году: факт vs прогноз')
+        st.plotly_chart(fig_bt, width='stretch')
+
+        # Метрики точности
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric('📊 Средняя ошибка (MAE)', f'{currency}{mae:,.0f}')
+        with col2:
+            st.metric('📈 Точность (MAPE)', f'{100 - mape:.1f}%',
+                      delta=f'±{mape:.1f}%')
+        with col3:
+            quality = 'Отличная' if mape < 10 else 'Хорошая' if mape < 20 else 'Средняя' if mape < 30 else 'Низкая'
+            st.metric('🏆 Качество модели', quality)
+
+        st.caption(f'MAPE (Mean Absolute Percentage Error): {mape:.1f}% — чем меньше, тем точнее модель')
+        # =========================================================
+        # ИНФОРМАЦИЯ
         # =========================================================
         st.markdown('---')
         st.markdown("""
         ### 📘 О прогнозе
 
         **Как работает модель:**
-        - Используется **Prophet** (Meta) — модель для прогнозирования временных рядов
-        - Учитывает **тренд** (общий рост/падение продаж) и **сезонность** (повторяющиеся паттерны по месяцам)
+        - Используется **Holt-Winters Exponential Smoothing** из библиотеки statsmodels
+        - Учитывает **тренд** и **сезонность** (12-месячный цикл)
         - Обучается на исторических данных (2014–2017) и предсказывает на 12 месяцев вперёд
 
-        **Что означают линии на графике:**
-        - 🟢 **Зелёная линия** — исторические данные (фактические продажи)
-        - 🟠 **Оранжевая линия** — прогноз (наиболее вероятный сценарий)
-        - 🔵 **Голубая зона** — доверительный интервал (80% вероятности, что реальные продажи будут в этом диапазоне)
+        **Что означают линии:**
+        - 🟢 **Зелёная** — история
+        - 🟠 **Оранжевая** — прогноз
 
-        **Ограничения и риски:**
-        - ⚠️ **Чем дальше прогноз — тем выше неопределённость.** Широкая голубая зона = модель менее уверена
-        - ⚠️ **Модель не учитывает внешние факторы:** маркетинговые акции, кризисы, изменения цен
-        - ⚠️ **4 года данных — это минимум** для качественного прогноза. Чем больше истории, тем точнее предсказания
-        - ⚠️ **Сезонность может меняться** со временем — модель предполагает, что паттерны стабильны
-
-        **Как использовать прогноз:**
-        - ✅ Для **бюджетирования** — ориентируйтесь на нижнюю границу (пессимистичный сценарий)
-        - ✅ Для **планирования закупок** — используйте средний прогноз
-        - ✅ Для **целевых показателей** — верхняя граница как амбициозная цель
-        - ❌ **Не используйте** для точных предсказаний на конкретный день — модель работает с месячными данными
-
-        **Точность модели:**
-        - Погрешность в среднем: **±15–20%** на горизонте 12 месяцев
-        - Первые 3 месяца прогноза — наиболее точные
-        - Рекомендуется **обновлять прогноз ежемесячно** при поступлении новых данных
+        **Ограничения:**
+        - ⚠️ Чем дальше прогноз — тем выше неопределённость
+        - ⚠️ Модель не учитывает внешние факторы (акции, кризисы)
+        - ✅ Для бюджетирования используйте прогноз как ориентир, а не точный план
         """)
 
     except Exception as e:
