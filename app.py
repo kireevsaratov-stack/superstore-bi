@@ -132,7 +132,7 @@ with st.sidebar:
     selected_segment = st.selectbox("RFM Сегмент", segments)
 
     st.subheader("🎨 Оформление")
-    st.info("🌙 Тёмная тема: меню ☰ → Settings → Theme → Dark")
+    st.markdown("🌙 **Тёмная тема:** `☰` → `Settings` → `Theme` → `Dark`")
 
     st.markdown("---")
     st.caption(f"Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
@@ -220,11 +220,20 @@ with tab1:
     with col2:
         st.subheader("📈 Сезонность продаж")
         heatmap_data = df.pivot_table(values='Sales', index='Month', columns='Year', aggfunc='sum')
+
+        # Месяцы текстом
+        months = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+                  'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+        heatmap_data.index = months[:len(heatmap_data)]
+
         fig = px.imshow(heatmap_data, text_auto='.2s', aspect='auto',
                         color_continuous_scale='Blues')
-        fig.update_xaxes(side='top', title='Год')
+
+        # Исправляем оси — убираем .5
+        fig.update_xaxes(side='top', title='Год', tickformat='d')
         fig.update_yaxes(title='Месяц')
         fig.update_layout(coloraxis_colorbar=dict(title='Продажи'))
+        fig.update_traces(textfont=dict(size=11))
         st.plotly_chart(fig, width='stretch')
 
 # ============ TAB 2: ПРОДУКТЫ ============
@@ -304,44 +313,51 @@ with tab3:
         st.warning("RFM-сегментация временно недоступна. Очистите кэш Streamlit (Manage app → Clear cache).")
     else:
         st.subheader("📊 RFM Сегментация")
+
+        # Берём ТОЛЬКО те сегменты, которые есть в данных
         rfm_data = df.groupby('Segment').agg(
             Customers=('Customer ID', 'nunique'),
             Sales=('Sales', 'sum'),
             Profit=('Profit', 'sum')
-        )
+        ).sort_values('Sales', ascending=False)
 
-        for seg in ['VIP', 'Лояльные', 'Спящие', 'Потерянные']:
-            if seg not in rfm_data.index:
-                rfm_data.loc[seg] = [0, 0, 0]
+        # Красивые названия и цвета для сегментов
+        segment_styles = {
+            'VIP': {'icon': '👑', 'color': '#FFD700'},
+            'Лояльные': {'icon': '💚', 'color': '#00CC96'},
+            'Спящие': {'icon': '💤', 'color': '#FFA15A'},
+            'Потерянные': {'icon': '👻', 'color': '#EF553B'}
+        }
 
-        rfm_data = rfm_data.reindex(['VIP', 'Лояльные', 'Спящие', 'Потерянные'])
+        # Показываем метрики для каждого сегмента
+        cols = st.columns(len(rfm_data))
 
-        col1, col2, col3, col4 = st.columns(4)
-        segment_names = ['👑 VIP', '💚 Лояльные', '💤 Спящие', '👻 Потерянные']
-        segment_colors = ['#FFD700', '#00CC96', '#FFA15A', '#EF553B']
-
-        for col, seg_name, color in zip([col1, col2, col3, col4], segment_names, segment_colors):
-            with col:
-                original_seg = seg_name.split()[-1]
-                val = rfm_data.loc[original_seg, 'Customers']
-                sales = rfm_data.loc[original_seg, 'Sales']
-                st.metric(seg_name, f"{val:,} чел.", f"Продажи: {currency}{sales:,.0f}")
+        for idx, (seg, row) in enumerate(rfm_data.iterrows()):
+            with cols[idx]:
+                style = segment_styles.get(seg, {'icon': '📊', 'color': '#808080'})
+                st.metric(
+                    f"{style['icon']} {seg}",
+                    f"{row['Customers']:,} чел.",
+                    f"Продажи: {currency}{row['Sales']:,.0f}"
+                )
 
         st.markdown("---")
         col1, col2 = st.columns(2)
 
         with col1:
             st.subheader("Распределение клиентов")
+            colors = [segment_styles.get(s, {}).get('color', '#808080') for s in rfm_data.index]
             fig = px.pie(rfm_data, values='Customers', names=rfm_data.index, hole=0.4,
-                         color_discrete_sequence=segment_colors)
+                         color_discrete_sequence=colors)
             fig.update_traces(textinfo='percent+label+value',
                               texttemplate='%{label}<br>%{percent:.1%}<br>%{value:,}')
             st.plotly_chart(fig, width='stretch')
 
         with col2:
             st.subheader("Продажи по сегментам")
+            colors = [segment_styles.get(s, {}).get('color', '#808080') for s in rfm_data.index]
             fig = px.bar(rfm_data, x=rfm_data.index, y='Sales', color=rfm_data.index,
-                         color_discrete_sequence=segment_colors, text_auto='.2s')
+                         color_discrete_sequence=colors, text_auto='.2s')
             fig.update_traces(textfont=dict(size=12), textposition='outside')
             fig.update_layout(showlegend=False, yaxis=dict(title='Продажи'))
             st.plotly_chart(fig, width='stretch')
