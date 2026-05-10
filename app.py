@@ -132,7 +132,9 @@ with st.sidebar:
     categories = ['Все'] + sorted(df_raw['Category'].unique().tolist())
     selected_category = st.selectbox("Категория", categories)
 
-    segments = ['Все'] + sorted(df_raw['Segment'].dropna().unique().tolist())
+    segments = ['Все']
+    if 'Segment' in df_raw.columns:
+    segments += sorted(df_raw['Segment'].dropna().unique().tolist())
     selected_segment = st.selectbox("RFM Сегмент", segments)
 
     st.subheader("🎨 Оформление")
