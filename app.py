@@ -58,45 +58,39 @@ def load_data():
     df['Margin %'] = (df['Profit'] / df['Sales'] * 100).round(1)
 
     # RFM анализ
-    ref_date = df['Order Date'].max() + timedelta(days=1)
-    rfm = df.groupby('Customer ID').agg({
-        'Order Date': lambda x: (ref_date - x.max()).days,
-        'Order ID': 'nunique',
-        'Sales': 'sum'
-    }).rename(columns={'Order Date': 'Recency', 'Order ID': 'Frequency', 'Sales': 'Monetary'})
+    try:
+        ref_date = df['Order Date'].max() + timedelta(days=1)
+        rfm = df.groupby('Customer ID').agg(
+            Recency=('Order Date', lambda x: (ref_date - x.max()).days),
+            Frequency=('Order ID', 'nunique'),
+            Monetary=('Sales', 'sum')
+        )
 
-    rfm['R'] = pd.qcut(rfm['Recency'], 3, labels=['Высокая', 'Средняя', 'Низкая'])
-    rfm['F'] = pd.qcut(rfm['Frequency'].rank(method='first'), 3, labels=['Низкая', 'Средняя', 'Высокая'])
-    rfm['M'] = pd.qcut(rfm['Monetary'], 3, labels=['Низкая', 'Средняя', 'Высокая'])
+        rfm['R_Score'] = pd.cut(rfm['Recency'], bins=3, labels=['Высокая', 'Средняя', 'Низкая'])
+        rfm['F_Score'] = pd.cut(rfm['Frequency'], bins=3, labels=['Низкая', 'Средняя', 'Высокая'])
 
-    def get_segment(row):
-        if row['R'] == 'Высокая' and row['F'] == 'Высокая':
-            return 'VIP'
-        elif row['R'] in ['Высокая', 'Средняя'] and row['F'] in ['Высокая', 'Средняя']:
-            return 'Лояльные'
-        elif row['R'] == 'Низкая':
-            return 'Потерянные'
-        else:
-            return 'Спящие'
+        conditions = [
+            (rfm['R_Score'] == 'Высокая') & (rfm['F_Score'] == 'Высокая'),
+            (rfm['R_Score'] == 'Низкая'),
+            (rfm['R_Score'] == 'Высокая') | (rfm['R_Score'] == 'Средняя')
+        ]
+        choices = ['VIP', 'Потерянные', 'Лояльные']
+        rfm['Segment'] = np.select(conditions, choices, default='Спящие')
 
-    rfm['Segment'] = rfm.apply(get_segment, axis=1)
+        df = df.merge(rfm[['Segment']], left_on='Customer ID', right_index=True, how='left')
+        df['Segment'] = df['Segment'].fillna('Спящие')
 
-    df = df.merge(rfm[['Segment']], left_on='Customer ID', right_index=True, how='left')
+    except Exception:
+        df['Segment'] = 'Без сегмента'
 
     # ABC анализ
-    product_profit = df.groupby('Product Name')['Profit'].sum().sort_values(ascending=False)
-    product_cumsum = product_profit.cumsum() / product_profit.sum() * 100
-
-    def get_abc(cumsum):
-        if cumsum <= 50:
-            return 'A - Золото'
-        elif cumsum <= 80:
-            return 'B - Середняки'
-        else:
-            return 'C - Балласт'
-
-    abc = product_cumsum.apply(get_abc)
-    df['ABC'] = df['Product Name'].map(abc)
+    try:
+        product_profit = df.groupby('Product Name')['Profit'].sum().sort_values(ascending=False)
+        product_cumsum = product_profit.cumsum() / product_profit.sum() * 100
+        abc = pd.cut(product_cumsum, bins=[0, 50, 80, 100], labels=['A - Золото', 'B - Середняки', 'C - Балласт'])
+        df['ABC'] = df['Product Name'].map(abc)
+    except:
+        df['ABC'] = 'Без категории'
 
     return df
 
@@ -138,7 +132,7 @@ with st.sidebar:
     selected_segment = st.selectbox("RFM Сегмент", segments)
 
     st.subheader("🎨 Оформление")
-    dark_mode = st.toggle("🌙 Тёмная тема", value=False)
+    st.info("🌙 Тёмная тема: меню ☰ → Settings → Theme → Dark")
 
     st.markdown("---")
     st.caption(f"Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
@@ -189,11 +183,14 @@ with tab1:
         sales_cat = df.groupby('Category')['Sales'].sum().reset_index()
         fig = px.pie(sales_cat, values='Sales', names='Category', hole=0.4,
                      color_discrete_sequence=px.colors.qualitative.Pastel)
-        fig.update_traces(textinfo='percent+label+value', texttemplate='%{label}<br>%{percent}<br>%{value:,.0f}')
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_traces(textinfo='percent+label+value',
+                          texttemplate='%{label}<br>%{percent:.1%}<br>%{value:,.0f}',
+                          textfont=dict(size=13))
+        fig.update_layout(showlegend=True, legend=dict(orientation='h', y=-0.1))
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
-        st.subheader("Прибыль по месяцам")
+        st.subheader("Продажи и Прибыль по месяцам")
         monthly = df.groupby([df['Order Date'].dt.to_period('M')]).agg({'Sales': 'sum', 'Profit': 'sum'}).reset_index()
         monthly['Order Date'] = monthly['Order Date'].astype(str)
         fig = go.Figure()
@@ -201,8 +198,9 @@ with tab1:
                                  fill='tozeroy', line=dict(color='#636EFA')))
         fig.add_trace(go.Scatter(x=monthly['Order Date'], y=monthly['Profit'], name='Прибыль',
                                  fill='tozeroy', line=dict(color='#00CC96')))
-        fig.update_layout(hovermode='x unified')
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(hovermode='x unified',
+                          xaxis=dict(tickformat='%Y-%m', dtick='M3'))
+        st.plotly_chart(fig, width='stretch')
 
     st.markdown("---")
 
@@ -214,17 +212,20 @@ with tab1:
         disc_profit = df.groupby('Discount Level', observed=False)['Profit'].sum().reset_index()
         colors = ['#00CC96' if x > 0 else '#EF553B' for x in disc_profit['Profit']]
         fig = px.bar(disc_profit, x='Discount Level', y='Profit', color='Discount Level',
-                     color_discrete_sequence=colors, text_auto='.0f')
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+                     color_discrete_sequence=colors, text_auto='.2s')
+        fig.update_traces(textfont=dict(size=13), textposition='outside')
+        fig.update_layout(showlegend=False, yaxis=dict(title='Прибыль'))
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
         st.subheader("📈 Сезонность продаж")
         heatmap_data = df.pivot_table(values='Sales', index='Month', columns='Year', aggfunc='sum')
-        fig = px.imshow(heatmap_data, text_auto='.0f', aspect='auto',
+        fig = px.imshow(heatmap_data, text_auto='.2s', aspect='auto',
                         color_continuous_scale='Blues')
-        fig.update_xaxes(side='top')
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_xaxes(side='top', title='Год')
+        fig.update_yaxes(title='Месяц')
+        fig.update_layout(coloraxis_colorbar=dict(title='Продажи'))
+        st.plotly_chart(fig, width='stretch')
 
 # ============ TAB 2: ПРОДУКТЫ ============
 with tab2:
@@ -236,18 +237,20 @@ with tab2:
         top10 = df.groupby('Product Name')['Sales'].sum().sort_values(ascending=False).head(10)
         fig = px.bar(x=top10.values, y=top10.index, orientation='h',
                      labels={'x': f'Продажи ({currency})', 'y': ''},
-                     color=top10.values, color_continuous_scale='Blues')
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig, use_container_width=True)
+                     text_auto='.2s', color=top10.values, color_continuous_scale='Blues')
+        fig.update_traces(textfont=dict(size=12), textposition='outside')
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
         st.subheader("💀 Топ-10 убыточных")
         loss10 = df.groupby('Product Name')['Profit'].sum().sort_values().head(10)
         fig = px.bar(x=loss10.values, y=loss10.index, orientation='h',
                      labels={'x': f'Убыток ({currency})', 'y': ''},
-                     color_discrete_sequence=['#EF553B'] * 10)
-        fig.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig, use_container_width=True)
+                     text_auto='.2s', color_discrete_sequence=['#EF553B'] * 10)
+        fig.update_traces(textfont=dict(size=12), textposition='outside')
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        st.plotly_chart(fig, width='stretch')
 
     st.markdown("---")
     st.subheader("📊 ABC-анализ продуктов")
@@ -257,17 +260,29 @@ with tab2:
         Products=('Product Name', 'nunique'),
         Sales=('Sales', 'sum'),
         Profit=('Profit', 'sum')
-    ).reindex(['A - Золото', 'B - Середняки', 'C - Балласт'])
+    )
+
+    for seg in ['A - Золото', 'B - Середняки', 'C - Балласт']:
+        if seg not in abc_data.index:
+            abc_data.loc[seg] = [0, 0, 0]
+
+    abc_data = abc_data.reindex(['A - Золото', 'B - Середняки', 'C - Балласт'])
 
     with col1:
-        st.metric("🥇 A - Золото", f"{abc_data.loc['A - Золото', 'Products']:,} продуктов",
-                  delta=f"Прибыль: {currency}{abc_data.loc['A - Золото', 'Profit']:,.0f}")
+        val = abc_data.loc['A - Золото', 'Products']
+        profit_val = abc_data.loc['A - Золото', 'Profit']
+        st.metric("🥇 A - Золото", f"{val:,} продуктов",
+                  delta=f"Прибыль: {currency}{profit_val:,.0f}")
     with col2:
-        st.metric("🥈 B - Середняки", f"{abc_data.loc['B - Середняки', 'Products']:,} продуктов",
-                  delta=f"Прибыль: {currency}{abc_data.loc['B - Середняки', 'Profit']:,.0f}")
+        val = abc_data.loc['B - Середняки', 'Products']
+        profit_val = abc_data.loc['B - Середняки', 'Profit']
+        st.metric("🥈 B - Середняки", f"{val:,} продуктов",
+                  delta=f"Прибыль: {currency}{profit_val:,.0f}")
     with col3:
-        st.metric("🥉 C - Балласт", f"{abc_data.loc['C - Балласт', 'Products']:,} продуктов",
-                  delta=f"Убыток: {currency}{abc_data.loc['C - Балласт', 'Profit']:,.0f}",
+        val = abc_data.loc['C - Балласт', 'Products']
+        profit_val = abc_data.loc['C - Балласт', 'Profit']
+        st.metric("🥉 C - Балласт", f"{val:,} продуктов",
+                  delta=f"Убыток: {currency}{profit_val:,.0f}",
                   delta_color="inverse")
 
     st.subheader("Детальная таблица продуктов")
@@ -286,7 +301,7 @@ with tab3:
     st.title("👥 Клиентская аналитика")
 
     if 'Segment' not in df.columns:
-        st.warning("RFM-сегментация временно недоступна. Пожалуйста, очистите кэш Streamlit.")
+        st.warning("RFM-сегментация временно недоступна. Очистите кэш Streamlit (Manage app → Clear cache).")
     else:
         st.subheader("📊 RFM Сегментация")
         rfm_data = df.groupby('Segment').agg(
@@ -295,7 +310,6 @@ with tab3:
             Profit=('Profit', 'sum')
         )
 
-        # Безопасная переиндексация
         for seg in ['VIP', 'Лояльные', 'Спящие', 'Потерянные']:
             if seg not in rfm_data.index:
                 rfm_data.loc[seg] = [0, 0, 0]
@@ -303,13 +317,14 @@ with tab3:
         rfm_data = rfm_data.reindex(['VIP', 'Лояльные', 'Спящие', 'Потерянные'])
 
         col1, col2, col3, col4 = st.columns(4)
-        segment_names = ['VIP', 'Лояльные', 'Спящие', 'Потерянные']
+        segment_names = ['👑 VIP', '💚 Лояльные', '💤 Спящие', '👻 Потерянные']
         segment_colors = ['#FFD700', '#00CC96', '#FFA15A', '#EF553B']
 
         for col, seg_name, color in zip([col1, col2, col3, col4], segment_names, segment_colors):
             with col:
-                val = rfm_data.loc[seg_name, 'Customers']
-                sales = rfm_data.loc[seg_name, 'Sales']
+                original_seg = seg_name.split()[-1]
+                val = rfm_data.loc[original_seg, 'Customers']
+                sales = rfm_data.loc[original_seg, 'Sales']
                 st.metric(seg_name, f"{val:,} чел.", f"Продажи: {currency}{sales:,.0f}")
 
         st.markdown("---")
@@ -319,13 +334,17 @@ with tab3:
             st.subheader("Распределение клиентов")
             fig = px.pie(rfm_data, values='Customers', names=rfm_data.index, hole=0.4,
                          color_discrete_sequence=segment_colors)
-            st.plotly_chart(fig, use_container_width=True)
+            fig.update_traces(textinfo='percent+label+value',
+                              texttemplate='%{label}<br>%{percent:.1%}<br>%{value:,}')
+            st.plotly_chart(fig, width='stretch')
 
         with col2:
             st.subheader("Продажи по сегментам")
             fig = px.bar(rfm_data, x=rfm_data.index, y='Sales', color=rfm_data.index,
-                         color_discrete_sequence=segment_colors)
-            st.plotly_chart(fig, use_container_width=True)
+                         color_discrete_sequence=segment_colors, text_auto='.2s')
+            fig.update_traces(textfont=dict(size=12), textposition='outside')
+            fig.update_layout(showlegend=False, yaxis=dict(title='Продажи'))
+            st.plotly_chart(fig, width='stretch')
 
 # ============ TAB 4: ГЕО ============
 with tab4:
@@ -338,8 +357,11 @@ with tab4:
                                                                                             ascending=False).head(10)
         fig = px.bar(state_data, x=state_data.index, y='Sales', color='Profit',
                      color_continuous_scale=['red', 'yellow', 'green'],
+                     text_auto='.2s',
                      labels={'Sales': f'Продажи ({currency})', 'State': 'Штат'})
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_traces(textfont=dict(size=11), textposition='outside')
+        fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'))
+        st.plotly_chart(fig, width='stretch')
 
     with col2:
         st.subheader("🏘️ Топ-10 городов")
@@ -347,14 +369,17 @@ with tab4:
                                                                                           ascending=False).head(10)
         fig = px.bar(city_data, x=city_data.index, y='Sales', color='Profit',
                      color_continuous_scale=['red', 'yellow', 'green'],
+                     text_auto='.2s',
                      labels={'Sales': f'Продажи ({currency})', 'City': 'Город'})
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_traces(textfont=dict(size=11), textposition='outside')
+        fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'))
+        st.plotly_chart(fig, width='stretch')
 
 # ============ TAB 5: ЭКСПОРТ ============
 with tab5:
     st.title("💾 Экспорт данных")
 
-    st.info("Здесь вы можете скачать отфильтрованные данные для дальнейшего анализа.")
+    st.info("Скачайте отфильтрованные данные для дальнейшего анализа.")
 
     from io import BytesIO
 
@@ -364,12 +389,15 @@ with tab5:
         st.download_button("📥 Скачать CSV", csv, "superstore_filtered.csv", "text/csv")
 
     with col2:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Superstore', index=False)
-        excel_data = output.getvalue()
-        st.download_button("📥 Скачать Excel", excel_data, "superstore_filtered.xlsx",
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        try:
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Superstore', index=False)
+            excel_data = output.getvalue()
+            st.download_button("📥 Скачать Excel", excel_data, "superstore_filtered.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except:
+            st.warning("Excel экспорт временно недоступен. Скачайте CSV.")
 
     st.markdown("---")
     st.subheader("📋 Все данные")
