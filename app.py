@@ -368,11 +368,9 @@ with tab2:
                                            labels=['Без скидки', '0-5%', '5-20%', '20%+'])
         fig = px.scatter(df_plot, x='Discount', y='Profit', color='Profit',
                          template=plotly_template, opacity=0.7, size_max=12,
-                         trendline='lowess', trendline_scope='overall',
                          color_continuous_scale=['red', 'yellow', 'green'],
                          hover_data=['Product Name', 'Sales', 'Discount'])
         fig.update_traces(selector=dict(mode='markers'), marker=dict(size=25, coloraxis='coloraxis'))
-        fig.update_traces(selector=dict(mode='lines'), line=dict(width=3, color='darkblue'))
         fig.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
         fig.update_layout(height=400, xaxis=dict(title='Скидка (%)', tickformat='.0%', range=[-0.05, 0.85]),
                           yaxis=dict(title=f'Прибыль ({currency})'), margin=dict(l=20, r=20, t=30, b=30),
