@@ -57,32 +57,6 @@ def load_data():
     df['Processing Days'] = (df['Ship Date'] - df['Order Date']).dt.days
     df['Margin %'] = (df['Profit'] / df['Sales'] * 100).round(1)
 
-    # RFM анализ
-    try:
-        ref_date = df['Order Date'].max() + timedelta(days=1)
-        rfm = df.groupby('Customer ID').agg(
-            Recency=('Order Date', lambda x: (ref_date - x.max()).days),
-            Frequency=('Order ID', 'nunique'),
-            Monetary=('Sales', 'sum')
-        )
-
-        rfm['R_Score'] = pd.cut(rfm['Recency'], bins=3, labels=['Высокая', 'Средняя', 'Низкая'])
-        rfm['F_Score'] = pd.cut(rfm['Frequency'], bins=3, labels=['Низкая', 'Средняя', 'Высокая'])
-
-        conditions = [
-            (rfm['R_Score'] == 'Высокая') & (rfm['F_Score'] == 'Высокая'),
-            (rfm['R_Score'] == 'Низкая'),
-            (rfm['R_Score'] == 'Высокая') | (rfm['R_Score'] == 'Средняя')
-        ]
-        choices = ['VIP', 'Потерянные', 'Лояльные']
-        rfm['Segment'] = np.select(conditions, choices, default='Спящие')
-
-        df = df.merge(rfm[['Segment']], left_on='Customer ID', right_index=True, how='left')
-        df['Segment'] = df['Segment'].fillna('Спящие')
-
-    except Exception:
-        df['Segment'] = 'Без сегмента'
-
     # ABC анализ
     try:
         product_profit = df.groupby('Product Name')['Profit'].sum().sort_values(ascending=False)
@@ -126,11 +100,6 @@ with st.sidebar:
     categories = ['Все'] + sorted(df_raw['Category'].unique().tolist())
     selected_category = st.selectbox("Категория", categories)
 
-    segments = ['Все']
-    if 'Segment' in df_raw.columns:
-        segments += sorted(df_raw['Segment'].dropna().unique().tolist())
-    selected_segment = st.selectbox("RFM Сегмент", segments)
-
     st.subheader("🎨 Оформление")
     st.markdown("🌙 **Тёмная тема:** `☰` → `Settings` → `Theme` → `Dark`")
 
@@ -147,8 +116,6 @@ if selected_state != 'Все':
     df = df[df['State'] == selected_state]
 if selected_category != 'Все':
     df = df[df['Category'] == selected_category]
-if selected_segment != 'Все':
-    df = df[df['Segment'] == selected_segment]
 
 if show_rub and len(df) > 0:
     df = convert_to_rub(df, rates)
@@ -184,7 +151,7 @@ with tab1:
         fig = px.pie(sales_cat, values='Sales', names='Category', hole=0.4,
                      color_discrete_sequence=px.colors.qualitative.Pastel)
         fig.update_traces(textinfo='percent+label+value',
-                          texttemplate='%{label}<br>%{percent:.1%}<br>%{value:,.0f}',
+                          texttemplate='%{label}<br>%{percent:.1%}<br>' + currency + '%{value:,.0f}',
                           textfont=dict(size=13))
         fig.update_layout(showlegend=True, legend=dict(orientation='h', y=-0.1))
         st.plotly_chart(fig, width='stretch')
@@ -195,9 +162,11 @@ with tab1:
         monthly['Order Date'] = monthly['Order Date'].astype(str)
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=monthly['Order Date'], y=monthly['Sales'], name='Продажи',
-                                 fill='tozeroy', line=dict(color='#636EFA')))
+                                 fill='tozeroy', line=dict(color='#636EFA'),
+                                 hovertemplate=currency + '%{y:,.0f}<extra>Продажи</extra>'))
         fig.add_trace(go.Scatter(x=monthly['Order Date'], y=monthly['Profit'], name='Прибыль',
-                                 fill='tozeroy', line=dict(color='#00CC96')))
+                                 fill='tozeroy', line=dict(color='#00CC96'),
+                                 hovertemplate=currency + '%{y:,.0f}<extra>Прибыль</extra>'))
         fig.update_layout(hovermode='x unified',
                           xaxis=dict(tickformat='%Y-%m', dtick='M3'))
         st.plotly_chart(fig, width='stretch')
@@ -213,27 +182,22 @@ with tab1:
         colors = ['#00CC96' if x > 0 else '#EF553B' for x in disc_profit['Profit']]
         fig = px.bar(disc_profit, x='Discount Level', y='Profit', color='Discount Level',
                      color_discrete_sequence=colors, text_auto='.2s')
-        fig.update_traces(textfont=dict(size=13), textposition='outside')
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=13), textposition='outside')
         fig.update_layout(showlegend=False, yaxis=dict(title='Прибыль'))
         st.plotly_chart(fig, width='stretch')
 
     with col2:
         st.subheader("📈 Сезонность продаж")
         heatmap_data = df.pivot_table(values='Sales', index='Month', columns='Year', aggfunc='sum')
-
-        # Месяцы текстом
         months = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
                   'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
         heatmap_data.index = months[:len(heatmap_data)]
-
         fig = px.imshow(heatmap_data, text_auto='.2s', aspect='auto',
                         color_continuous_scale='Blues')
-
-        # Исправляем оси — убираем .5
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=11))
         fig.update_xaxes(side='top', title='Год', tickformat='d')
         fig.update_yaxes(title='Месяц')
         fig.update_layout(coloraxis_colorbar=dict(title='Продажи'))
-        fig.update_traces(textfont=dict(size=11))
         st.plotly_chart(fig, width='stretch')
 
 # ============ TAB 2: ПРОДУКТЫ ============
@@ -247,7 +211,7 @@ with tab2:
         fig = px.bar(x=top10.values, y=top10.index, orientation='h',
                      labels={'x': f'Продажи ({currency})', 'y': ''},
                      text_auto='.2s', color=top10.values, color_continuous_scale='Blues')
-        fig.update_traces(textfont=dict(size=12), textposition='outside')
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
         fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
         st.plotly_chart(fig, width='stretch')
 
@@ -257,7 +221,7 @@ with tab2:
         fig = px.bar(x=loss10.values, y=loss10.index, orientation='h',
                      labels={'x': f'Убыток ({currency})', 'y': ''},
                      text_auto='.2s', color_discrete_sequence=['#EF553B'] * 10)
-        fig.update_traces(textfont=dict(size=12), textposition='outside')
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
         fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
         st.plotly_chart(fig, width='stretch')
 
@@ -303,64 +267,90 @@ with tab2:
         Discount=('Discount', 'mean'),
         ABC=('ABC', 'first')
     ).round(2).sort_values('Sales', ascending=False)
-    st.dataframe(product_table, use_container_width=True, height=400)
+    st.dataframe(product_table, use_container_width=True, height=400,
+                 column_config={
+                     'Sales': st.column_config.NumberColumn('Продажи', format=f'{currency}%.0f'),
+                     'Profit': st.column_config.NumberColumn('Прибыль', format=f'{currency}%.0f'),
+                 })
 
 # ============ TAB 3: КЛИЕНТЫ ============
 with tab3:
     st.title("👥 Клиентская аналитика")
 
-    if 'Segment' not in df.columns:
-        st.warning("RFM-сегментация временно недоступна. Очистите кэш Streamlit (Manage app → Clear cache).")
-    else:
-        st.subheader("📊 RFM Сегментация")
+    customer_stats = df.groupby('Customer ID').agg(
+        Customer_Name=('Customer Name', 'first'),
+        Total_Sales=('Sales', 'sum'),
+        Total_Profit=('Profit', 'sum'),
+        Orders=('Order ID', 'nunique'),
+        Avg_Check=('Sales', 'mean'),
+        Last_Order=('Order Date', 'max'),
+    ).reset_index()
 
-        # Берём ТОЛЬКО те сегменты, которые есть в данных
-        rfm_data = df.groupby('Segment').agg(
-            Customers=('Customer ID', 'nunique'),
-            Sales=('Sales', 'sum'),
-            Profit=('Profit', 'sum')
-        ).sort_values('Sales', ascending=False)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("👥 Всего клиентов", f"{len(customer_stats):,}")
+    with col2:
+        st.metric("💰 Средний чек", f"{currency}{customer_stats['Avg_Check'].mean():,.0f}")
+    with col3:
+        st.metric("📦 Среднее заказов", f"{customer_stats['Orders'].mean():.1f}")
+    with col4:
+        st.metric("💎 Средние продажи на клиента", f"{currency}{customer_stats['Total_Sales'].mean():,.0f}")
 
-        # Красивые названия и цвета для сегментов
-        segment_styles = {
-            'VIP': {'icon': '👑', 'color': '#FFD700'},
-            'Лояльные': {'icon': '💚', 'color': '#00CC96'},
-            'Спящие': {'icon': '💤', 'color': '#FFA15A'},
-            'Потерянные': {'icon': '👻', 'color': '#EF553B'}
-        }
+    st.markdown("---")
 
-        # Показываем метрики для каждого сегмента
-        cols = st.columns(len(rfm_data))
+    col1, col2 = st.columns(2)
 
-        for idx, (seg, row) in enumerate(rfm_data.iterrows()):
-            with cols[idx]:
-                style = segment_styles.get(seg, {'icon': '📊', 'color': '#808080'})
-                st.metric(
-                    f"{style['icon']} {seg}",
-                    f"{row['Customers']:,} чел.",
-                    f"Продажи: {currency}{row['Sales']:,.0f}"
-                )
+    with col1:
+        st.subheader("🏆 Топ-10 клиентов по продажам")
+        top_customers = customer_stats.nlargest(10, 'Total_Sales')[['Customer_Name', 'Total_Sales', 'Orders']]
+        fig = px.bar(top_customers, x='Total_Sales', y='Customer_Name', orientation='h',
+                     labels={'Total_Sales': f'Продажи ({currency})', 'Customer_Name': 'Клиент'},
+                     text_auto='.2s', color='Total_Sales', color_continuous_scale='Blues')
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        st.plotly_chart(fig, width='stretch')
 
-        st.markdown("---")
-        col1, col2 = st.columns(2)
+    with col2:
+        st.subheader("📊 Распределение клиентов по заказам")
+        orders_dist = customer_stats['Orders'].value_counts().sort_index()
+        fig = px.bar(x=orders_dist.index, y=orders_dist.values,
+                     labels={'x': 'Количество заказов', 'y': 'Количество клиентов'},
+                     color_discrete_sequence=['#636EFA'])
+        fig.update_traces(texttemplate='%{value:,}', textfont=dict(size=12), textposition='outside')
+        st.plotly_chart(fig, width='stretch')
 
-        with col1:
-            st.subheader("Распределение клиентов")
-            colors = [segment_styles.get(s, {}).get('color', '#808080') for s in rfm_data.index]
-            fig = px.pie(rfm_data, values='Customers', names=rfm_data.index, hole=0.4,
-                         color_discrete_sequence=colors)
-            fig.update_traces(textinfo='percent+label+value',
-                              texttemplate='%{label}<br>%{percent:.1%}<br>%{value:,}')
-            st.plotly_chart(fig, width='stretch')
+    st.markdown("---")
 
-        with col2:
-            st.subheader("Продажи по сегментам")
-            colors = [segment_styles.get(s, {}).get('color', '#808080') for s in rfm_data.index]
-            fig = px.bar(rfm_data, x=rfm_data.index, y='Sales', color=rfm_data.index,
-                         color_discrete_sequence=colors, text_auto='.2s')
-            fig.update_traces(textfont=dict(size=12), textposition='outside')
-            fig.update_layout(showlegend=False, yaxis=dict(title='Продажи'))
-            st.plotly_chart(fig, width='stretch')
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("💎 Клиенты с максимальной прибылью")
+        top_profit = customer_stats.nlargest(10, 'Total_Profit')[['Customer_Name', 'Total_Profit', 'Total_Sales']]
+        fig = px.bar(top_profit, x='Total_Profit', y='Customer_Name', orientation='h',
+                     labels={'Total_Profit': f'Прибыль ({currency})', 'Customer_Name': 'Клиент'},
+                     text_auto='.2s', color='Total_Profit', color_continuous_scale='Greens')
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=12), textposition='outside')
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+        st.plotly_chart(fig, width='stretch')
+
+    with col2:
+        st.subheader("📅 Активность клиентов (дни с последнего заказа)")
+        ref_date = df['Order Date'].max()
+        customer_stats['Days_Since_Last'] = (ref_date - customer_stats['Last_Order']).dt.days
+        fig = px.histogram(customer_stats, x='Days_Since_Last', nbins=30,
+                           labels={'Days_Since_Last': 'Дней с последнего заказа', 'count': 'Клиентов'},
+                           color_discrete_sequence=['#AB63FA'])
+        st.plotly_chart(fig, width='stretch')
+
+    st.markdown("---")
+    st.subheader("📋 Все клиенты")
+    st.dataframe(customer_stats.sort_values('Total_Sales', ascending=False),
+                 use_container_width=True, height=400,
+                 column_config={
+                     'Total_Sales': st.column_config.NumberColumn('Продажи', format=f'{currency}%.0f'),
+                     'Total_Profit': st.column_config.NumberColumn('Прибыль', format=f'{currency}%.0f'),
+                     'Avg_Check': st.column_config.NumberColumn('Средний чек', format=f'{currency}%.0f'),
+                 })
 
 # ============ TAB 4: ГЕО ============
 with tab4:
@@ -375,7 +365,7 @@ with tab4:
                      color_continuous_scale=['red', 'yellow', 'green'],
                      text_auto='.2s',
                      labels={'Sales': f'Продажи ({currency})', 'State': 'Штат'})
-        fig.update_traces(textfont=dict(size=11), textposition='outside')
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=11), textposition='outside')
         fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'))
         st.plotly_chart(fig, width='stretch')
 
@@ -387,7 +377,7 @@ with tab4:
                      color_continuous_scale=['red', 'yellow', 'green'],
                      text_auto='.2s',
                      labels={'Sales': f'Продажи ({currency})', 'City': 'Город'})
-        fig.update_traces(textfont=dict(size=11), textposition='outside')
+        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=11), textposition='outside')
         fig.update_layout(coloraxis_colorbar=dict(title='Прибыль'))
         st.plotly_chart(fig, width='stretch')
 
@@ -417,4 +407,8 @@ with tab5:
 
     st.markdown("---")
     st.subheader("📋 Все данные")
-    st.dataframe(df, use_container_width=True, height=600)
+    st.dataframe(df, use_container_width=True, height=600,
+                 column_config={
+                     'Sales': st.column_config.NumberColumn('Продажи', format=f'{currency}%.2f'),
+                     'Profit': st.column_config.NumberColumn('Прибыль', format=f'{currency}%.2f'),
+                 })
