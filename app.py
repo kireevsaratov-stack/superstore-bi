@@ -6,7 +6,6 @@ import requests
 import numpy as np
 from io import BytesIO
 from datetime import datetime, timedelta
-from prophet import Prophet
 
 # =========================================================
 # PAGE CONFIG
