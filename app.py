@@ -254,10 +254,7 @@ with tab1:
             fig.update_traces(text=[[f"{currency}{val:,.0f}" for val in row] for row in heatmap_data.values],
                               texttemplate="%{text}", textfont=dict(size=11))
             fig.update_xaxes(side='top', title='Год', tickformat='d', dtick=1)
-            fig.update_layout(
-                coloraxis_colorbar=dict(title=f'Продажи ({currency})', orientation='h', yanchor='bottom', y=-0.3, xanchor='center', x=0.5),
-                height=450, margin=dict(l=10, r=10, t=30, b=60)
-            )
+            fig.update_layout(coloraxis_showscale=False, height=450, margin=dict(l=10, r=10, t=30, b=10))
             st.plotly_chart(fig, width='stretch')
 
         with seas_tab2:
@@ -268,11 +265,8 @@ with tab1:
             fig.update_layout(height=400)
             st.plotly_chart(fig, width='stretch')
 
-
-
     with col2:
         st.subheader('🗺️ География продаж')
-
         state_abbr = {
             'Alabama': 'AL', 'Arizona': 'AZ', 'Arkansas': 'AR', 'California': 'CA',
             'Colorado': 'CO', 'Connecticut': 'CT', 'Delaware': 'DE', 'Florida': 'FL',
@@ -288,22 +282,15 @@ with tab1:
             'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV', 'Wisconsin': 'WI',
             'Wyoming': 'WY', 'District of Columbia': 'DC'
         }
-
         state_data = df.groupby('State').agg({'Sales': 'sum', 'Profit': 'sum'}).reset_index()
         state_data['State Code'] = state_data['State'].map(state_abbr)
-
-        fig = px.choropleth(
-            state_data, locations='State Code', locationmode='USA-states',
-            color='Sales', scope='usa', template=plotly_template,
-            color_continuous_scale='Blues',
-            labels={'Sales': f'Продажи ({currency})'},
-            hover_name='State',
-            hover_data={'Profit': f':{currency},.0f', 'Sales': f':{currency},.0f'}
-        )
-        fig.update_layout(
-            height=450, margin=dict(l=10, r=10, t=30, b=60),
-            coloraxis_colorbar=dict(title=f'Продажи ({currency})', orientation='h', yanchor='bottom', y=-0.3, xanchor='center', x=0.5)
-        )
+        fig = px.choropleth(state_data, locations='State Code', locationmode='USA-states',
+                            color='Sales', scope='usa', template=plotly_template,
+                            color_continuous_scale='Blues',
+                            labels={'Sales': f'Продажи ({currency})'},
+                            hover_name='State',
+                            hover_data={'Profit': f':{currency},.0f', 'Sales': f':{currency},.0f'})
+        fig.update_layout(coloraxis_showscale=False, height=450, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig, width='stretch')
 
 # =========================================================
@@ -372,16 +359,9 @@ with tab2:
                          hover_data=['Product Name', 'Sales', 'Discount'])
         fig.update_traces(selector=dict(mode='markers'), marker=dict(size=25, coloraxis='coloraxis'))
         fig.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
-        fig.update_layout(height=400, xaxis=dict(title='Скидка (%)', tickformat='.0%', range=[-0.05, 0.85]),
+        fig.update_layout(height=500, xaxis=dict(title='Скидка (%)', tickformat='.0%', range=[-0.05, 0.85]),
                           yaxis=dict(title=f'Прибыль ({currency})'), margin=dict(l=20, r=20, t=30, b=30),
-                          coloraxis_colorbar=dict(
-                              title='Прибыль',
-                              orientation='h',
-                              yanchor='bottom',
-                              y=-0.42,
-                              xanchor='center',
-                              x=0.5
-                          ), template=plotly_template)
+                          coloraxis_showscale=False, template=plotly_template)
         st.plotly_chart(fig, width='stretch')
 
     with col2:
@@ -395,19 +375,8 @@ with tab2:
                      color='Total_Profit', template=plotly_template,
                      color_continuous_scale=['red', 'yellow', 'green'])
         fig.update_traces(text=top_cust['Total_Sales'].apply(lambda x: f'{x:,.0f}'), textposition='outside', textfont=dict(size=11))
-        fig.update_layout(
-            yaxis={'categoryorder': 'total ascending'},
-            height=500,
-            margin=dict(l=20, r=20, t=30, b=60),
-            coloraxis_colorbar=dict(
-                title='Прибыль',
-                orientation='h',
-                yanchor='bottom',
-                y=-0.3,
-                xanchor='center',
-                x=0.5
-            )
-        )
+        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=500, margin=dict(l=20, r=20, t=30, b=30),
+                          coloraxis_showscale=False)
         st.plotly_chart(fig, width='stretch')
 
 # =========================================================
