@@ -7,8 +7,10 @@ from datetime import datetime, timedelta
 import numpy as np
 
 # ============ НАСТРОЙКИ ============
-st.set_page_config(page_title="Superstore BI Pro", page_icon="📊", layout="wide")
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
 
+st.set_page_config(page_title="Superstore BI Pro", page_icon="📊", layout="wide")
 
 # ============ КУРСЫ ВАЛЮТ ============
 @st.cache_data(ttl=86400)
@@ -101,7 +103,17 @@ with st.sidebar:
     selected_category = st.selectbox("Категория", categories)
 
     st.subheader("🎨 Оформление")
-    st.markdown("🌙 **Тёмная тема:** `☰` → `Settings` → `Theme` → `Dark`")
+    dark_mode = st.checkbox("🌙 Тёмная тема")
+    if dark_mode:
+        st.session_state.dark_mode = True
+        st.markdown("""
+               <style>
+               .stApp { background-color: #0e1117; color: #c9d1d9; }
+               .stMetric { color: #c9d1d9; }
+               </style>
+           """, unsafe_allow_html=True)
+    else:
+        st.session_state.dark_mode = False
 
     st.markdown("---")
     st.caption(f"Обновлено: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
@@ -183,7 +195,7 @@ with tab1:
         fig = px.bar(disc_profit, x='Discount Level', y='Profit', color='Discount Level',
                      color_discrete_sequence=colors, text_auto='.2s')
         fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=13), textposition='outside')
-        fig.update_layout(showlegend=False, yaxis=dict(title='Прибыль'))
+        fig.update_layout(showlegend=False, yaxis=dict(title=f'Прибыль ({currency})'))
         st.plotly_chart(fig, width='stretch')
 
     with col2:
@@ -192,12 +204,25 @@ with tab1:
         months = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
                   'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
         heatmap_data.index = months[:len(heatmap_data)]
-        fig = px.imshow(heatmap_data, text_auto='.2s', aspect='auto',
-                        color_continuous_scale='Blues')
-        fig.update_traces(texttemplate=currency + '%{value:,.0f}', textfont=dict(size=11))
-        fig.update_xaxes(side='top', title='Год', tickformat='d')
+
+        # Создаём аннотации со знаком валюты
+        annotations = []
+        for y_idx, month in enumerate(heatmap_data.index):
+            for x_idx, year in enumerate(heatmap_data.columns):
+                val = heatmap_data.iloc[y_idx, x_idx]
+                annotations.append(dict(
+                    x=year, y=month,
+                    text=f"{currency}{val:,.0f}",
+                    showarrow=False,
+                    font=dict(size=11, color="black" if val < heatmap_data.values.max() * 0.7 else "white")
+                ))
+
+        fig = px.imshow(heatmap_data, aspect='auto', color_continuous_scale='Blues')
+        fig.update_xaxes(side='top', title='Год', tickformat='d', dtick=1)
         fig.update_yaxes(title='Месяц')
         fig.update_layout(coloraxis_colorbar=dict(title='Продажи'))
+        fig.update_traces(text=[[f"{currency}{val:,.0f}" for val in row] for row in heatmap_data.values],
+                          texttemplate="%{text}", textfont=dict(size=11))
         st.plotly_chart(fig, width='stretch')
 
 # ============ TAB 2: ПРОДУКТЫ ============
