@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
 
 # Настройка страницы
 st.set_page_config(
@@ -10,7 +11,49 @@ st.set_page_config(
     layout="wide"
 )
 
-# Загрузка данных с кэшированием
+
+# ============ РАБОТА С КУРСОМ ВАЛЮТ ============
+
+@st.cache_data(ttl=86400)
+def get_exchange_rates():
+    url = "https://www.cbr-xml-daily.ru/daily_json.js"
+    response = requests.get(url)
+    current_data = response.json()
+    current_rate = current_data['Valute']['USD']['Value']
+
+    rates = {}
+    years = [2014, 2015, 2016, 2017]
+
+    for year in years:
+        for month in range(1, 13):
+            date_str = f"{year}-{month:02d}-01"
+            archive_url = f"https://www.cbr-xml-daily.ru/archive/{date_str}/daily_json.js"
+            try:
+                resp = requests.get(archive_url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    rate = data['Valute']['USD']['Value']
+                    rates[date_str] = rate
+            except:
+                continue
+
+    return rates
+
+
+def convert_to_rub(df, rates):
+    df = df.copy()
+    df['Order Date'] = pd.to_datetime(df['Order Date'])
+    df['Month_Key'] = df['Order Date'].dt.strftime('%Y-%m-01')
+    df['Rate'] = df['Month_Key'].map(rates)
+    avg_rate = sum(rates.values()) / len(rates) if rates else 60
+    df['Rate'] = df['Rate'].fillna(avg_rate)
+    df['Sales'] = df['Sales'] * df['Rate']
+    df['Profit'] = df['Profit'] * df['Rate']
+    return df
+
+
+# ============ ЗАГРУЗКА ДАННЫХ ============
+
 @st.cache_data
 def load_data():
     df = pd.read_csv('Sample - Superstore.csv', encoding='latin1')
@@ -19,127 +62,94 @@ def load_data():
     df['Month'] = df['Order Date'].dt.month
     return df
 
-df = load_data()
 
-# Боковая панель с фильтрами
+# ============ ЗАГРУЗКА КУРСОВ ============
+
+rates = get_exchange_rates()
+
+# ============ ЗАГРУЗКА ДАННЫХ (ДОЛЖНА БЫТЬ ПЕРЕД ФИЛЬТРАМИ) ============
+
+df_raw = load_data()
+
+# ============ UI ============
+
 st.sidebar.header("🎛️ Фильтры")
 
-# Фильтр по региону
-regions = ['Все'] + list(df['Region'].unique())
+show_rub = st.sidebar.toggle("🇷🇺 Показать в рублях", value=False)
+
+if show_rub:
+    currency_symbol = "₽"
+    st.sidebar.info("Курсы ЦБ РФ загружены (исторические, по месяцам)")
+else:
+    currency_symbol = "$"
+
+regions = ['Все'] + list(df_raw['Region'].unique())
 selected_region = st.sidebar.selectbox("Регион", regions)
 
-# Фильтр по году
-years = ['Все'] + sorted(df['Year'].unique().tolist())
+years = ['Все'] + sorted(df_raw['Year'].unique().tolist())
 selected_year = st.sidebar.selectbox("Год", years)
 
-# Фильтрация данных
-df_filtered = df.copy()
+# ФИЛЬТРАЦИЯ
+df_filtered = df_raw.copy()
+
 if selected_region != 'Все':
     df_filtered = df_filtered[df_filtered['Region'] == selected_region]
 if selected_year != 'Все':
     df_filtered = df_filtered[df_filtered['Year'] == int(selected_year)]
 
-# Главная страница
-st.title("📊 Superstore BI Dashboard")
-st.markdown(f"*Данные за период: {df_filtered['Order Date'].min().strftime('%d.%m.%Y')} - {df_filtered['Order Date'].max().strftime('%d.%m.%Y')}*")
+if show_rub:
+    df_filtered = convert_to_rub(df_filtered, rates)
 
-# KPI метрики
+# ============ ГЛАВНАЯ СТРАНИЦА ============
+
+st.title("📊 Superstore BI Dashboard")
+st.markdown(
+    f"*Данные: {df_filtered['Order Date'].min().strftime('%d.%m.%Y')} — {df_filtered['Order Date'].max().strftime('%d.%m.%Y')}*")
+
 col1, col2, col3, col4 = st.columns(4)
 
+total_sales = df_filtered['Sales'].sum()
+total_profit = df_filtered['Profit'].sum()
+
 with col1:
-    total_sales = df_filtered['Sales'].sum()
-    st.metric(
-        label="💰 Общие продажи",
-        value=f"${total_sales:,.0f}",
-        delta=f"{len(df_filtered):,} заказов"
-    )
-
+    st.metric(f"💰 Продажи", f"{currency_symbol}{total_sales:,.0f}")
 with col2:
-    total_profit = df_filtered['Profit'].sum()
-    st.metric(
-        label="📈 Прибыль",
-        value=f"${total_profit:,.0f}",
-        delta=f"Рентабельность: {(total_profit/total_sales*100):.1f}%"
-    )
-
+    st.metric(f"📈 Прибыль", f"{currency_symbol}{total_profit:,.0f}")
 with col3:
     avg_discount = df_filtered['Discount'].mean() * 100
-    st.metric(
-        label="🏷️ Средняя скидка",
-        value=f"{avg_discount:.1f}%"
-    )
-
+    st.metric("🏷️ Средняя скидка", f"{avg_discount:.1f}%")
 with col4:
-    unique_customers = df_filtered['Customer ID'].nunique()
-    st.metric(
-        label="👥 Клиентов",
-        value=f"{unique_customers:,}"
-    )
+    customers = df_filtered['Customer ID'].nunique()
+    st.metric("👥 Клиентов", f"{customers:,}")
 
-# Графики
 st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Продажи по категориям")
-    sales_by_cat = df_filtered.groupby('Category')['Sales'].sum().reset_index()
-    fig = px.pie(
-        sales_by_cat,
-        values='Sales',
-        names='Category',
-        hole=0.3,
-        color_discrete_sequence=px.colors.qualitative.Set3
-    )
+    sales_cat = df_filtered.groupby('Category')['Sales'].sum().reset_index()
+    fig = px.pie(sales_cat, values='Sales', names='Category', hole=0.3)
     fig.update_traces(textinfo='percent+label')
     st.plotly_chart(fig, use_container_width=True)
 
 with col2:
     st.subheader("Продажи по месяцам")
-    sales_by_month = df_filtered.groupby(['Year', 'Month'])['Sales'].sum().reset_index()
-    sales_by_month['Date'] = pd.to_datetime(
-        sales_by_month['Year'].astype(str) + '-' +
-        sales_by_month['Month'].astype(str) + '-01'
-    )
-    fig = px.line(
-        sales_by_month,
-        x='Date',
-        y='Sales',
-        markers=True,
-        labels={'Sales': 'Продажи ($)', 'Date': 'Дата'}
-    )
+    monthly = df_filtered.groupby(['Year', 'Month'])['Sales'].sum().reset_index()
+    monthly['Date'] = pd.to_datetime(monthly['Year'].astype(str) + '-' + monthly['Month'].astype(str) + '-01')
+    fig = px.line(monthly, x='Date', y='Sales', markers=True)
     st.plotly_chart(fig, use_container_width=True)
 
-# Топ продуктов
 st.markdown("---")
 st.subheader("🏆 Топ-10 продуктов")
-
-top_products = df_filtered.groupby('Product Name')['Sales'].sum().sort_values(ascending=False).head(10)
-fig = px.bar(
-    x=top_products.values,
-    y=top_products.index,
-    orientation='h',
-    labels={'x': 'Продажи ($)', 'y': 'Товар'},
-    color=top_products.values,
-    color_continuous_scale='Viridis'
-)
+top10 = df_filtered.groupby('Product Name')['Sales'].sum().sort_values(ascending=False).head(10)
+fig = px.bar(x=top10.values, y=top10.index, orientation='h')
 fig.update_layout(yaxis={'categoryorder': 'total ascending'})
 st.plotly_chart(fig, use_container_width=True)
 
-# Детальная статистика
 st.markdown("---")
-st.subheader("📋 Детальная статистика по регионам")
+st.subheader("📋 Статистика по регионам")
+stats = df_filtered.groupby('Region').agg({'Sales': 'sum', 'Profit': 'sum', 'Order ID': 'nunique'}).round(0)
+st.dataframe(stats, use_container_width=True)
 
-stats_by_region = df_filtered.groupby('Region').agg({
-    'Sales': ['sum', 'mean'],
-    'Profit': 'sum',
-    'Order ID': 'nunique'
-}).round(2)
-
-stats_by_region.columns = ['Продажи (всего)', 'Средний чек', 'Прибыль', 'Кол-во заказов']
-stats_by_region = stats_by_region.sort_values('Продажи (всего)', ascending=False)
-
-st.dataframe(stats_by_region, use_container_width=True)
-
-# Подвал
 st.markdown("---")
-st.markdown("📊 **Superstore BI Dashboard** | Создано с помощью Streamlit")
+st.caption("Курсы валют: ЦБ РФ • Данные обновляются раз в сутки")
