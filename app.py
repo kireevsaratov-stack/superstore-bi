@@ -285,38 +285,47 @@ with tab2:
 with tab3:
     st.title("👥 Клиентская аналитика")
 
-    st.subheader("📊 RFM Сегментация")
-    rfm_data = df.groupby('Segment').agg(
-        Customers=('Customer ID', 'nunique'),
-        Sales=('Sales', 'sum'),
-        Profit=('Profit', 'sum')
-    ).reindex(['VIP', 'Лояльные', 'Спящие', 'Потерянные'])
+    if 'Segment' not in df.columns:
+        st.warning("RFM-сегментация временно недоступна. Пожалуйста, очистите кэш Streamlit.")
+    else:
+        st.subheader("📊 RFM Сегментация")
+        rfm_data = df.groupby('Segment').agg(
+            Customers=('Customer ID', 'nunique'),
+            Sales=('Sales', 'sum'),
+            Profit=('Profit', 'sum')
+        )
 
-    col1, col2, col3, col4 = st.columns(4)
-    segment_names = ['VIP', 'Лояльные', 'Спящие', 'Потерянные']
-    segment_colors = ['#FFD700', '#00CC96', '#FFA15A', '#EF553B']
+        # Безопасная переиндексация
+        for seg in ['VIP', 'Лояльные', 'Спящие', 'Потерянные']:
+            if seg not in rfm_data.index:
+                rfm_data.loc[seg] = [0, 0, 0]
 
-    for col, seg_name, color in zip([col1, col2, col3, col4], segment_names, segment_colors):
-        with col:
-            if seg_name in rfm_data.index:
+        rfm_data = rfm_data.reindex(['VIP', 'Лояльные', 'Спящие', 'Потерянные'])
+
+        col1, col2, col3, col4 = st.columns(4)
+        segment_names = ['VIP', 'Лояльные', 'Спящие', 'Потерянные']
+        segment_colors = ['#FFD700', '#00CC96', '#FFA15A', '#EF553B']
+
+        for col, seg_name, color in zip([col1, col2, col3, col4], segment_names, segment_colors):
+            with col:
                 val = rfm_data.loc[seg_name, 'Customers']
                 sales = rfm_data.loc[seg_name, 'Sales']
                 st.metric(seg_name, f"{val:,} чел.", f"Продажи: {currency}{sales:,.0f}")
 
-    st.markdown("---")
-    col1, col2 = st.columns(2)
+        st.markdown("---")
+        col1, col2 = st.columns(2)
 
-    with col1:
-        st.subheader("Распределение клиентов")
-        fig = px.pie(rfm_data, values='Customers', names=rfm_data.index, hole=0.4,
-                     color_discrete_sequence=segment_colors)
-        st.plotly_chart(fig, use_container_width=True)
+        with col1:
+            st.subheader("Распределение клиентов")
+            fig = px.pie(rfm_data, values='Customers', names=rfm_data.index, hole=0.4,
+                         color_discrete_sequence=segment_colors)
+            st.plotly_chart(fig, use_container_width=True)
 
-    with col2:
-        st.subheader("Продажи по сегментам")
-        fig = px.bar(rfm_data, x=rfm_data.index, y='Sales', color=rfm_data.index,
-                     color_discrete_sequence=segment_colors)
-        st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.subheader("Продажи по сегментам")
+            fig = px.bar(rfm_data, x=rfm_data.index, y='Sales', color=rfm_data.index,
+                         color_discrete_sequence=segment_colors)
+            st.plotly_chart(fig, use_container_width=True)
 
 # ============ TAB 4: ГЕО ============
 with tab4:
